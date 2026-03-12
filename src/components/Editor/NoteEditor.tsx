@@ -1,10 +1,12 @@
 import { useCallback, useState } from 'react';
-import { BookOpen, Code2, PenTool } from 'lucide-react';
-import type { CanvasSettings, Notebook, Page, Stroke } from '../../types';
+import { BookOpen, Code2, Loader2, PanelRightOpen, PenTool, Sparkles } from 'lucide-react';
+import type { AIResult, CanvasSettings, Notebook, Page, Stroke, TextBlock } from '../../types';
 import { t } from '../../i18n';
-import { addPage, addStroke, clearStrokes, getLanguage, removeLastStroke, updatePage } from '../../store/noteStore';
+import { addPage, addStroke, addTextBlock, clearStrokes, getLanguage, removeLastStroke, updatePage } from '../../store/noteStore';
+import { analyzeDispatch } from '../../services/api';
 import DrawingCanvas from '../Canvas/DrawingCanvas';
 import CanvasToolbar from '../Canvas/CanvasToolbar';
+import AIResultsPanel from '../AI/AIResultsPanel';
 import CodeEditor from './CodeEditor';
 import MarkdownEditor from './MarkdownEditor';
 
@@ -27,6 +29,9 @@ export default function NoteEditor({ notebook, onNotebookUpdate }: NoteEditorPro
   });
   const [undoneStrokes, setUndoneStrokes] = useState<Stroke[]>([]);
   const [markdownContent, setMarkdownContent] = useState('');
+  const [aiResults, setAiResults] = useState<AIResult[]>(() => currentPage?.aiResults ?? []);
+  const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [resultsPanelOpen, setResultsPanelOpen] = useState(false);
 
   const currentPage: Page | undefined = notebook.pages[currentPageIndex];
 
@@ -105,8 +110,73 @@ export default function NoteEditor({ notebook, onNotebookUpdate }: NoteEditorPro
     }
   };
 
+  const handleAnalyze = useCallback(async () => {
+    if (!currentPage || isAnalyzing) return;
+
+    // Gather content from the page
+    const textContent = currentPage.textBlocks.map((b) => b.content).join('\n');
+    const codeContent = currentPage.codeBlocks.map((b) => b.code).join('\n');
+    const content = [textContent, codeContent, markdownContent].filter(Boolean).join('\n\n');
+
+    if (!content.trim()) return;
+
+    setIsAnalyzing(true);
+    try {
+      const result = await analyzeDispatch(content, notebook.subject, 'text', lang);
+      if (result.success) {
+        const aiResult: AIResult = {
+          id: `ai-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+          type: result.result_type,
+          content: typeof result.result === 'string' ? result.result : JSON.stringify(result.result, null, 2),
+          data: result.result,
+          domain: result.domain,
+          timestamp: Date.now(),
+        };
+        setAiResults((prev) => [...prev, aiResult]);
+        // Save to page
+        updatePage(notebook.id, currentPage.id, { aiResults: [...aiResults, aiResult] });
+        setResultsPanelOpen(true);
+      }
+    } catch {
+      // silently handle - user will see no result added
+    } finally {
+      setIsAnalyzing(false);
+    }
+  }, [currentPage, isAnalyzing, markdownContent, notebook, lang, aiResults]);
+
+  const handleInsertAiResult = useCallback((result: AIResult) => {
+    if (!currentPage) return;
+    // Insert as a text block on the page
+    const newBlock: TextBlock = {
+      id: `tb-ai-${Date.now()}`,
+      x: 20,
+      y: 20 + currentPage.textBlocks.length * 120,
+      width: 760,
+      height: 100,
+      content: `[AI - ${t(`subject.${result.domain}`, lang)}]\n${result.content}`,
+      isMarkdown: false,
+    };
+    addTextBlock(notebook.id, currentPage.id, newBlock);
+    const updated = { ...notebook };
+    updated.pages = [...notebook.pages];
+    updated.pages[currentPageIndex] = {
+      ...currentPage,
+      textBlocks: [...currentPage.textBlocks, newBlock],
+    };
+    onNotebookUpdate(updated);
+  }, [currentPage, notebook, currentPageIndex, onNotebookUpdate, lang]);
+
+  const handleRemoveAiResult = useCallback((resultId: string) => {
+    const newResults = aiResults.filter((r) => r.id !== resultId);
+    setAiResults(newResults);
+    if (currentPage) {
+      updatePage(notebook.id, currentPage.id, { aiResults: newResults });
+    }
+  }, [aiResults, currentPage, notebook]);
+
   return (
-    <div className="flex flex-col h-full">
+    <div className="flex h-full">
+    <div className="flex flex-col flex-1 min-w-0">
       {/* Mode tabs & page navigation */}
       <div className="flex items-center justify-between px-4 py-2 bg-gray-50 border-b border-gray-200">
         <div className="flex items-center gap-1">
@@ -162,6 +232,39 @@ export default function NoteEditor({ notebook, onNotebookUpdate }: NoteEditorPro
             +
           </button>
         </div>
+
+        {/* AI & Results buttons */}
+        <div className="flex items-center gap-1">
+          <button
+            onClick={handleAnalyze}
+            disabled={isAnalyzing}
+            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-white bg-gradient-to-r from-purple-500 to-indigo-600 rounded-lg hover:from-purple-600 hover:to-indigo-700 disabled:opacity-50 transition-all shadow-sm"
+            title={t('ai.analyzeContent', lang)}
+          >
+            {isAnalyzing ? (
+              <Loader2 size={13} className="animate-spin" />
+            ) : (
+              <Sparkles size={13} />
+            )}
+            {t('ai.analyzeContent', lang)}
+          </button>
+          <button
+            onClick={() => setResultsPanelOpen(!resultsPanelOpen)}
+            className={`p-1.5 rounded-lg transition-colors ${
+              resultsPanelOpen
+                ? 'bg-purple-100 text-purple-600'
+                : 'text-gray-500 hover:bg-gray-100'
+            }`}
+            title={t('ai.results', lang)}
+          >
+            <PanelRightOpen size={16} />
+            {aiResults.length > 0 && (
+              <span className="absolute -top-1 -right-1 w-4 h-4 text-[9px] font-bold bg-purple-500 text-white rounded-full flex items-center justify-center">
+                {aiResults.length}
+              </span>
+            )}
+          </button>
+        </div>
       </div>
 
       {/* Canvas toolbar (only in canvas mode) */}
@@ -196,7 +299,29 @@ export default function NoteEditor({ notebook, onNotebookUpdate }: NoteEditorPro
         {editorMode === 'code' && (
           <CodeEditor />
         )}
+
+        {/* Inline AI results on canvas */}
+        {editorMode === 'canvas' && currentPage && currentPage.textBlocks.filter(b => b.id.startsWith('tb-ai-')).length > 0 && (
+          <div className="absolute bottom-4 left-4 right-4 max-h-40 overflow-y-auto space-y-2 pointer-events-auto">
+            {currentPage.textBlocks.filter(b => b.id.startsWith('tb-ai-')).map((block) => (
+              <div key={block.id} className="bg-blue-50/90 backdrop-blur-sm border border-blue-200 rounded-lg px-3 py-2 text-xs text-blue-800 shadow-sm">
+                <p className="whitespace-pre-wrap line-clamp-3">{block.content}</p>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
+    </div>
+
+    {/* AI Results Panel */}
+    <AIResultsPanel
+      results={aiResults}
+      isOpen={resultsPanelOpen}
+      onClose={() => setResultsPanelOpen(false)}
+      onInsertToNote={handleInsertAiResult}
+      onRemoveResult={handleRemoveAiResult}
+      lang={lang}
+    />
     </div>
   );
 }

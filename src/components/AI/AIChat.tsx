@@ -1,5 +1,5 @@
 import { useCallback, useRef, useState } from 'react';
-import { Bot, Loader2, Send, Sparkles, Trash2, X } from 'lucide-react';
+import { Bot, Download, Loader2, Send, Sparkles, Trash2, X } from 'lucide-react';
 import type { ChatMessage, SubjectDomain } from '../../types';
 import { chatContextual, solveMath, drawGraph } from '../../services/api';
 import { addChatMessage, clearChatHistory, getChatHistory, getLanguage } from '../../store/noteStore';
@@ -10,13 +10,14 @@ interface AIChatProps {
   onClose: () => void;
   context?: string;
   domain?: SubjectDomain;
+  onInsertToNote?: (content: string, imageBase64?: string) => void;
 }
 
 function generateId(): string {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
 }
 
-export default function AIChat({ isOpen, onClose, context = '', domain = 'general' }: AIChatProps) {
+export default function AIChat({ isOpen, onClose, context = '', domain = 'general', onInsertToNote }: AIChatProps) {
   const lang = getLanguage();
   const [messages, setMessages] = useState<ChatMessage[]>(() => getChatHistory());
   const [input, setInput] = useState('');
@@ -170,13 +171,22 @@ export default function AIChat({ isOpen, onClose, context = '', domain = 'genera
             className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
           >
             <div
-              className={`max-w-[80%] px-3 py-2 rounded-xl text-sm whitespace-pre-wrap ${
+              className={`max-w-[80%] rounded-xl text-sm ${
                 msg.role === 'user'
                   ? 'bg-blue-500 text-white rounded-br-md'
                   : 'bg-gray-100 text-gray-800 rounded-bl-md'
               }`}
             >
-              {msg.content}
+              <p className="px-3 py-2 whitespace-pre-wrap">{msg.content}</p>
+              {msg.role === 'assistant' && onInsertToNote && (
+                <button
+                  onClick={() => onInsertToNote(msg.content)}
+                  className="flex items-center gap-1 px-3 py-1.5 text-[10px] text-blue-600 hover:bg-blue-50 w-full border-t border-gray-200 rounded-b-xl transition-colors"
+                >
+                  <Download size={10} />
+                  {t('ai.insertToNote', lang)}
+                </button>
+              )}
             </div>
           </div>
         ))}

@@ -10,9 +10,10 @@ import {
   Settings,
   Sparkles,
 } from 'lucide-react';
-import type { Folder, Language, Notebook } from './types';
+import type { Folder, Language, Notebook, SubjectDomain } from './types';
 import { t } from './i18n';
 import {
+  addTextBlock,
   createFolder,
   createNotebook,
   deleteFolder,
@@ -23,6 +24,7 @@ import {
   getNotebooks,
 } from './store/noteStore';
 import FolderTree from './components/Sidebar/FolderTree';
+import CreateNotebookDialog from './components/Sidebar/CreateNotebookDialog';
 import NoteEditor from './components/Editor/NoteEditor';
 import AIChat from './components/AI/AIChat';
 import SettingsPanel from './components/Settings/SettingsPanel';
@@ -35,6 +37,8 @@ function App() {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [chatOpen, setChatOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [createNotebookOpen, setCreateNotebookOpen] = useState(false);
+  const [createNotebookFolderId, setCreateNotebookFolderId] = useState<string | null>(null);
 
   const selectedNotebook = selectedNotebookId ? getNotebook(selectedNotebookId) : null;
 
@@ -63,9 +67,12 @@ function App() {
   };
 
   const handleCreateNotebook = (folderId: string) => {
-    const title = prompt(t(lang === 'ko' ? 'notebook.untitled' : 'notebook.untitled', lang));
-    if (!title) return;
-    const nb = createNotebook(title, folderId);
+    setCreateNotebookFolderId(folderId);
+    setCreateNotebookOpen(true);
+  };
+
+  const handleCreateNotebookConfirm = (title: string, subject: SubjectDomain) => {
+    const nb = createNotebook(title, createNotebookFolderId || '', subject);
     refresh();
     setSelectedNotebookId(nb.id);
   };
@@ -86,10 +93,8 @@ function App() {
 
   const handleCreateQuickNotebook = () => {
     const firstFolder = folders[0];
-    const title = prompt(t('notebook.untitled', lang)) || t('notebook.untitled', lang);
-    const nb = createNotebook(title, firstFolder?.id || '');
-    refresh();
-    setSelectedNotebookId(nb.id);
+    setCreateNotebookFolderId(firstFolder?.id || '');
+    setCreateNotebookOpen(true);
   };
 
   return (
@@ -240,6 +245,22 @@ function App() {
         isOpen={chatOpen}
         onClose={() => setChatOpen(false)}
         domain={selectedNotebook?.subject}
+        onInsertToNote={(content: string) => {
+          if (!selectedNotebook) return;
+          const page = selectedNotebook.pages[0];
+          if (!page) return;
+          const block = {
+            id: `tb-ai-${Date.now()}`,
+            x: 20,
+            y: 20 + page.textBlocks.length * 120,
+            width: 760,
+            height: 100,
+            content: `[AI Chat]\n${content}`,
+            isMarkdown: false,
+          };
+          addTextBlock(selectedNotebook.id, page.id, block);
+          refresh();
+        }}
       />
 
       {/* Settings modal */}
@@ -247,6 +268,14 @@ function App() {
         isOpen={settingsOpen}
         onClose={() => setSettingsOpen(false)}
         onLanguageChange={(newLang: Language) => setLang(newLang)}
+      />
+
+      {/* Create notebook dialog */}
+      <CreateNotebookDialog
+        isOpen={createNotebookOpen}
+        onClose={() => setCreateNotebookOpen(false)}
+        onCreate={handleCreateNotebookConfirm}
+        lang={lang}
       />
     </div>
   );
